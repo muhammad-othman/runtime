@@ -65,6 +65,8 @@ namespace System.Formats.Cbor
                     case CborReaderState.TextString:
                     case CborReaderState.StartIndefiniteLengthTextString:
                         break;
+                    case CborReaderState.NeedsMoreData:
+                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
                     default:
                         throw new CborContentException(SR.Cbor_Reader_InvalidDateTimeEncoding);
                 }
@@ -127,6 +129,9 @@ namespace System.Formats.Cbor
                         TimeSpan timespan = TimeSpan.FromSeconds(seconds);
                         return CborHelpers.UnixEpoch + timespan;
 
+                    case CborReaderState.NeedsMoreData:
+                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
+
                     default:
                         throw new CborContentException(SR.Cbor_Reader_InvalidUnixTimeEncoding);
                 }
@@ -170,6 +175,8 @@ namespace System.Formats.Cbor
                     case CborReaderState.ByteString:
                     case CborReaderState.StartIndefiniteLengthByteString:
                         break;
+                    case CborReaderState.NeedsMoreData:
+                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
                     default:
                         throw new CborContentException(SR.Cbor_Reader_InvalidBigNumEncoding);
                 }
@@ -208,6 +215,11 @@ namespace System.Formats.Cbor
             {
                 ReadExpectedTag(expectedTag: CborTag.DecimalFraction);
 
+                if (PeekState() == CborReaderState.NeedsMoreData)
+                {
+                    throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
+                }
+
                 if (PeekState() != CborReaderState.StartArray || ReadStartArray() != 2)
                 {
                     throw new CborContentException(SR.Cbor_Reader_InvalidDecimalEncoding);
@@ -222,6 +234,9 @@ namespace System.Formats.Cbor
                     case CborReaderState.NegativeInteger:
                         exponent = ReadInt64();
                         break;
+
+                    case CborReaderState.NeedsMoreData:
+                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
 
                     default:
                         throw new CborContentException(SR.Cbor_Reader_InvalidDecimalEncoding);
@@ -250,6 +265,9 @@ namespace System.Formats.Cbor
                         }
 
                         break;
+
+                    case CborReaderState.NeedsMoreData:
+                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_UnexpectedEndOfBuffer);
 
                     default:
                         throw new CborContentException(SR.Cbor_Reader_InvalidDecimalEncoding);

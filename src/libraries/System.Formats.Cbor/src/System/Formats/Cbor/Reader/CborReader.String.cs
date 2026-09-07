@@ -101,6 +101,9 @@ namespace System.Formats.Cbor
         /// <para>There was an unexpected end of CBOR encoding data.</para>
         /// <para>-or-</para>
         /// <para>The next value uses a CBOR encoding that is not valid under the current conformance mode.</para></exception>
+        /// <remarks>The returned memory is a view over the reader's current data buffer. It is only valid until the buffer is
+        /// replaced with <see cref="Reset(ReadOnlyMemory{byte})" />, <see cref="Reset(ReadOnlyMemory{byte}, bool)" />, or
+        /// <see cref="SlideData" />; if the caller reuses the underlying buffer, its contents are overwritten.</remarks>
         public ReadOnlyMemory<byte> ReadDefiniteLengthByteString()
         {
             CborInitialByte header = PeekInitialByte(expectedType: CborMajorType.ByteString);
@@ -262,6 +265,9 @@ namespace System.Formats.Cbor
         /// <para>There was an unexpected end of CBOR encoding data.</para>
         /// <para>-or-</para>
         /// <para>The next value uses a CBOR encoding that is not valid under the current conformance mode.</para></exception>
+        /// <remarks>The returned memory is a view over the reader's current data buffer. It is only valid until the buffer is
+        /// replaced with <see cref="Reset(ReadOnlyMemory{byte})" />, <see cref="Reset(ReadOnlyMemory{byte}, bool)" />, or
+        /// <see cref="SlideData" />; if the caller reuses the underlying buffer, its contents are overwritten.</remarks>
         public ReadOnlyMemory<byte> ReadDefiniteLengthTextStringBytes()
         {
             CborInitialByte header = PeekInitialByte(expectedType: CborMajorType.TextString);
