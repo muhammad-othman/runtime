@@ -9,7 +9,7 @@ namespace System.Formats.Cbor
     {
         /// <summary>Reads the contents of the next value, discarding the result and advancing the reader.</summary>
         /// <param name="disableConformanceModeChecks"><see langword="true" /> to disable conformance mode validation for the skipped values, equivalent to using <see cref="CborConformanceMode.Lax" />; otherwise, <see langword="false" />.</param>
-        /// <exception cref="InvalidOperationException">The reader is not at the start of new value.</exception>
+        /// <exception cref="InvalidOperationException">The reader is not at the start of a new value.</exception>
         /// <exception cref="CborContentException"><para>The next value has an invalid CBOR encoding.</para>
         /// <para>-or-</para>
         /// <para>There was an unexpected end of CBOR encoding data.</para>
@@ -28,7 +28,7 @@ namespace System.Formats.Cbor
         /// <param name="disableConformanceModeChecks"><see langword="true" /> to disable conformance mode validation for the skipped values, equivalent to using <see cref="CborConformanceMode.Lax" />; otherwise, <see langword="false" />.</param>
         /// <returns><see langword="true" /> if the value was skipped; <see langword="false" /> if the value is incomplete
         /// in the current buffer and the reader's current data is not the final block, in which case the reader state is unchanged.</returns>
-        /// <exception cref="InvalidOperationException">The reader is not at the start of new value.</exception>
+        /// <exception cref="InvalidOperationException">The reader is not at the start of a new value.</exception>
         /// <exception cref="CborContentException"><para>The next value has an invalid CBOR encoding.</para>
         /// <para>-or-</para>
         /// <para>There was an unexpected end of CBOR encoding data and the reader's current data is the final block.</para>
@@ -41,7 +41,7 @@ namespace System.Formats.Cbor
 
         /// <summary>Reads the remaining contents of the current value context, discarding results and advancing the reader to the next value in the parent context.</summary>
         /// <param name="disableConformanceModeChecks"><see langword="true" /> to disable conformance mode validation for the skipped values, equivalent to using <see cref="CborConformanceMode.Lax" />; otherwise, <see langword="false" />.</param>
-        /// <exception cref="InvalidOperationException">The reader is at the root context</exception>
+        /// <exception cref="InvalidOperationException">The reader is at the root context.</exception>
         /// <exception cref="CborContentException"><para>The next value has an invalid CBOR encoding.</para>
         /// <para>-or-</para>
         /// <para>There was an unexpected end of CBOR encoding data.</para>
@@ -65,7 +65,7 @@ namespace System.Formats.Cbor
         /// <param name="disableConformanceModeChecks"><see langword="true" /> to disable conformance mode validation for the skipped values, equivalent to using <see cref="CborConformanceMode.Lax" />; otherwise, <see langword="false" />.</param>
         /// <returns><see langword="true" /> if the current value context was skipped; <see langword="false" /> if its contents are incomplete
         /// in the current buffer and the reader's current data is not the final block, in which case the reader state is unchanged.</returns>
-        /// <exception cref="InvalidOperationException">The reader is at the root context</exception>
+        /// <exception cref="InvalidOperationException">The reader is at the root context.</exception>
         /// <exception cref="CborContentException"><para>The next value has an invalid CBOR encoding.</para>
         /// <para>-or-</para>
         /// <para>There was an unexpected end of CBOR encoding data and the reader's current data is the final block.</para>

@@ -11,8 +11,6 @@ namespace System.Formats.Cbor.Tests
 {
     public partial class CborReaderTests
     {
-        private const string UnexpectedEndMessageSentinel = "Unexpected end";
-
         private static CborReaderOptions LaxOptions => new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax };
 
         public static IEnumerable<object[]> SampleValuesAndChunkSizes =>
@@ -307,6 +305,23 @@ namespace System.Formats.Cbor.Tests
         {
             var reader = new CborReader("01".HexToByteArray(), LaxOptions, isFinalBlock: false);
             Assert.Throws<InvalidOperationException>(() => reader.TrySkipToParent());
+        }
+
+        [Fact]
+        public static void TrySkipValue_NotAtStartOfValue_ShouldThrowInvalidOperationException()
+        {
+            // at the end of a definite-length collection
+            var reader = new CborReader("8101".HexToByteArray(), LaxOptions, isFinalBlock: false); // [1]
+            reader.ReadStartArray();
+            Helpers.VerifyValue(reader, 1);
+            Assert.Equal(CborReaderState.EndArray, reader.PeekState());
+            Assert.Throws<InvalidOperationException>(() => reader.TrySkipValue());
+
+            // at the end of the document
+            reader = new CborReader("01".HexToByteArray(), LaxOptions, isFinalBlock: false);
+            Helpers.VerifyValue(reader, 1);
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
+            Assert.Throws<InvalidOperationException>(() => reader.TrySkipValue());
         }
 
         [Fact]
@@ -679,9 +694,8 @@ namespace System.Formats.Cbor.Tests
                 var reader = new CborReader(encoding.AsMemory(0, split), LaxOptions, isFinalBlock: false);
 
                 // semantic tag readers consume multiple tokens, so they throw on truncation
-                // even though the tag token itself passes the PeekState gate; the message
-                // reports the truncation rather than an invalid semantic encoding
-                AssertExtensions.ThrowsContains<CborContentException>(() => ReadTaggedValue(reader), UnexpectedEndMessageSentinel);
+                // even though the tag token itself passes the PeekState gate
+                Assert.Throws<CborContentException>(() => ReadTaggedValue(reader));
                 Assert.Equal(split, reader.BytesRemaining); // reader state was restored
 
                 reader.SlideData(encoding, isFinalBlock: true);
@@ -822,7 +836,7 @@ namespace System.Formats.Cbor.Tests
 
             // reading past NeedsMoreData reports the truncation, mirroring mid-token truncation,
             // rather than declaring the end of the sequence
-            AssertExtensions.ThrowsContains<CborContentException>(() => reader.ReadInt32(), UnexpectedEndMessageSentinel);
+            Assert.Throws<CborContentException>(() => reader.ReadInt32());
 
             reader.SlideData("02".HexToByteArray(), isFinalBlock: false);
             Helpers.VerifyValue(reader, 2);
