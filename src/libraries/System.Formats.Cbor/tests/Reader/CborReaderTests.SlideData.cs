@@ -12,20 +12,8 @@ namespace System.Formats.Cbor.Tests
     {
         private static CborReaderOptions LaxOptions => new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax };
 
-        // Token classes underrepresented in SampleCborValues, exercising the availability gate
-        // for every argument width: half- and double-precision floats, two-byte simple values,
-        // and multi-byte UTF-8 text contents (definite-length and as an indefinite-length chunk).
-        private static readonly string[] AdditionalChunkedSampleValues = new[]
-        {
-            "f93c00", // 1.0 (half-precision)
-            "fb3ff199999999999a", // 1.1 (double-precision)
-            "f8ff", // simple(255)
-            "63e6b0b4", // "水"
-            "7f63e6b0b46161ff", // "水" + "a" (indefinite-length)
-        };
-
         public static IEnumerable<object[]> SampleValuesAndChunkSizes =>
-            from hexEncoding in SampleCborValues.Concat(AdditionalChunkedSampleValues)
+            from hexEncoding in SampleCborValues
             from chunkSize in new[] { 1, 2, 3, 10 }
             select new object[] { hexEncoding, chunkSize };
 

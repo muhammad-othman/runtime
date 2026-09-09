@@ -227,7 +227,9 @@ namespace System.Formats.Cbor.Tests
                 "60",
                 "6161",
                 "6449455446",
+                "63e6b0b4",
                 "7f62616260ff",
+                "7f63e6b0b46161ff",
                 // Arrays
                 "80",
                 "840120604107",
@@ -244,8 +246,11 @@ namespace System.Formats.Cbor.Tests
                 // simple values
                 "f4",
                 "f6",
+                "f8ff",
                 // floating point encodings
+                "f93c00",
                 "fa47c35000",
+                "fb3ff199999999999a",
             };
 
         // Truncations of well-formed encodings: appending the right bytes to any of these
