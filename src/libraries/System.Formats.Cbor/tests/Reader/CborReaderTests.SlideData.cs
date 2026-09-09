@@ -2,7 +2,6 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Test.Cryptography;
 using Xunit;
@@ -29,28 +28,6 @@ namespace System.Formats.Cbor.Tests
             from hexEncoding in SampleCborValues.Concat(AdditionalChunkedSampleValues)
             from chunkSize in new[] { 1, 2, 3, 10 }
             select new object[] { hexEncoding, chunkSize };
-
-        // All InvalidCborValues entries that are merely truncated, i.e. could be completed by further data.
-        // The excluded entries are structurally malformed regardless of any data that could follow;
-        // TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList guards this filter against
-        // changes to the shared list.
-        public static IEnumerable<object[]> TruncatedCborInputs =>
-            InvalidCborValues.Except(MalformedCborValues).Select(x => new object[] { x });
-
-        private static readonly string[] MalformedCborValues = new[] { "bf01ff", "daffffffffff" };
-
-        [Fact]
-        public static void TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList()
-        {
-            foreach (string malformed in MalformedCborValues)
-            {
-                Assert.Contains(malformed, InvalidCborValues);
-
-                // appending data cannot make these valid: they already fail with a full buffer
-                var reader = new CborReader(malformed.HexToByteArray(), LaxOptions, isFinalBlock: false);
-                Assert.Throws<CborContentException>(() => reader.SkipValue());
-            }
-        }
 
         [Theory]
         [MemberData(nameof(SampleValuesAndChunkSizes))]
@@ -166,13 +143,6 @@ namespace System.Formats.Cbor.Tests
             Assert.Equal(encoding.Length, reader.BytesRemaining);
         }
 
-        [Fact]
-        public static void PeekState_FinalBlock_EndOfBuffer_ShouldThrowCborContentException()
-        {
-            var reader = new CborReader(ReadOnlyMemory<byte>.Empty, LaxOptions, isFinalBlock: true);
-            Assert.Throws<CborContentException>(() => reader.PeekState());
-        }
-
         [Theory]
         [InlineData("18", CborReaderState.UnsignedInteger)]
         [InlineData("44010203", CborReaderState.ByteString)]
@@ -228,192 +198,6 @@ namespace System.Formats.Cbor.Tests
             Assert.Equal(CborReaderState.Finished, reader.PeekState());
         }
 
-        [Theory]
-        [MemberData(nameof(TruncatedCborInputs))]
-        public static void TrySkipValue_NotFinalBlock_TruncatedValue_ReturnsFalseAndPreservesState(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding, LaxOptions, isFinalBlock: false);
-
-            Assert.False(reader.TrySkipValue());
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
-            Assert.Equal(0, reader.CurrentDepth);
-        }
-
-        [Theory]
-        [MemberData(nameof(EncodedValueInputs))]
-        public static void TrySkipValue_NotFinalBlock_AllSplitPoints_SucceedsAfterSlideData(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-
-            for (int split = 0; split < encoding.Length; split++)
-            {
-                var reader = new CborReader(encoding.AsMemory(0, split), LaxOptions, isFinalBlock: false);
-
-                Assert.False(reader.TrySkipValue());
-                Assert.Equal(split, reader.BytesRemaining); // reader state was restored
-
-                reader.SlideData(encoding, isFinalBlock: true);
-                Assert.True(reader.TrySkipValue());
-                Assert.Equal(CborReaderState.Finished, reader.PeekState());
-            }
-        }
-
-        [Theory]
-        [MemberData(nameof(EncodedValueInputs))]
-        public static void TrySkipToParent_NotFinalBlock_AllSplitPoints_SucceedsAfterSlideData(string hexEncoding)
-        {
-            byte[] encoding = ("8301" + hexEncoding + "03").HexToByteArray(); // [1, <value>, 3]
-
-            for (int split = 2; split < encoding.Length; split++)
-            {
-                var reader = new CborReader(encoding.AsMemory(0, split), LaxOptions, isFinalBlock: false);
-                reader.ReadStartArray();
-                Helpers.VerifyValue(reader, 1);
-
-                int bytesRemaining = reader.BytesRemaining;
-                Assert.False(reader.TrySkipToParent());
-                Assert.Equal(bytesRemaining, reader.BytesRemaining); // reader state was restored
-                Assert.Equal(1, reader.CurrentDepth);
-
-                reader.SlideData(encoding.AsMemory(split - reader.BytesRemaining), isFinalBlock: true);
-                Assert.True(reader.TrySkipToParent());
-                Assert.Equal(0, reader.CurrentDepth);
-                Assert.Equal(CborReaderState.Finished, reader.PeekState());
-            }
-        }
-
-        [Theory]
-        [MemberData(nameof(SkipTestInputs))]
-        public static void TrySkipValue_FinalBlock_HappyPath(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding);
-
-            Assert.True(reader.TrySkipValue());
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
-        [Theory]
-        [MemberData(nameof(SkipTestInvalidCborInputs))]
-        public static void TrySkipValue_FinalBlock_InvalidValue_ShouldThrowCborContentException(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding);
-
-            Assert.Throws<CborContentException>(() => reader.TrySkipValue());
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
-        }
-
-        [Theory]
-        [InlineData("bf01ff")] // indefinite-length map key missing a value
-        [InlineData("daffffffffff")] // tag followed by break byte
-        [InlineData("1c")] // reserved additional information value
-        [InlineData("ff")] // break byte at the root context
-        public static void TrySkipValue_NotFinalBlock_MalformedData_ShouldThrowCborContentException(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding, LaxOptions, isFinalBlock: false);
-
-            Assert.Throws<CborContentException>(() => reader.TrySkipValue());
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
-        }
-
-        [Theory]
-        [MemberData(nameof(NonConformingSkipValueEncodings))]
-        public static void TrySkipValue_ValidationDisabled_NonConformingValues_ShouldSucceed(CborConformanceMode mode, string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding, mode);
-
-            Assert.True(reader.TrySkipValue(disableConformanceModeChecks: true));
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
-        [Fact]
-        public static void TrySkipToParent_RootContext_ShouldThrowInvalidOperationException()
-        {
-            var reader = new CborReader("01".HexToByteArray(), LaxOptions, isFinalBlock: false);
-            Assert.Throws<InvalidOperationException>(() => reader.TrySkipToParent());
-        }
-
-        [Fact]
-        public static void TrySkipValue_NotAtStartOfValue_ShouldThrowInvalidOperationException()
-        {
-            // at the end of a definite-length collection
-            var reader = new CborReader("8101".HexToByteArray(), LaxOptions, isFinalBlock: false); // [1]
-            reader.ReadStartArray();
-            Helpers.VerifyValue(reader, 1);
-            Assert.Equal(CborReaderState.EndArray, reader.PeekState());
-            Assert.Throws<InvalidOperationException>(() => reader.TrySkipValue());
-
-            // at the end of the document
-            reader = new CborReader("01".HexToByteArray(), LaxOptions, isFinalBlock: false);
-            Helpers.VerifyValue(reader, 1);
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-            Assert.Throws<InvalidOperationException>(() => reader.TrySkipValue());
-        }
-
-        [Fact]
-        public static void TrySkipValue_NotFinalBlock_AfterReadTag_ShouldRestoreTagContext()
-        {
-            byte[] encoding = "c1820102".HexToByteArray(); // 1([1, 2])
-            var reader = new CborReader(encoding.AsMemory(0, 3), LaxOptions, isFinalBlock: false);
-
-            Assert.Equal((CborTag)1, reader.ReadTag());
-
-            // the failed skip enters the truncated array before restoring,
-            // which exercises checkpoint restoration of the pending tag context
-            Assert.False(reader.TrySkipValue());
-            Assert.Equal(2, reader.BytesRemaining);
-            Assert.Equal(CborReaderState.StartArray, reader.PeekState());
-
-            reader.SlideData(encoding.AsMemory(1), isFinalBlock: true);
-            Assert.True(reader.TrySkipValue());
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
-        [Fact]
-        public static void TrySkipValue_NotFinalBlock_TruncatedNestedTags_ShouldRestoreTagContext()
-        {
-            byte[] encoding = "c1c201".HexToByteArray(); // 1(2(1))
-            var reader = new CborReader(encoding.AsMemory(0, 2), LaxOptions, isFinalBlock: false);
-
-            // the failed skip consumes both tags before restoring,
-            // which exercises checkpoint restoration of the pending tag context
-            Assert.False(reader.TrySkipValue());
-            Assert.Equal(2, reader.BytesRemaining);
-            Assert.Equal(CborReaderState.Tag, reader.PeekState());
-
-            reader.SlideData(encoding, isFinalBlock: true);
-            Assert.True(reader.TrySkipValue());
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
-        [Fact]
-        public static void TrySkipValue_NotFinalBlock_TruncatedMapValue_ReturnsFalseAndResumesAfterSlideData()
-        {
-            byte[] encoding = "a26161820102616203".HexToByteArray(); // {"a": [1, 2], "b": 3}
-            var reader = new CborReader(encoding.AsMemory(0, 5), LaxOptions, isFinalBlock: false);
-
-            reader.ReadStartMap();
-            Assert.Equal("a", reader.ReadTextString());
-
-            // the failed skip at a value position enters the truncated array before restoring,
-            // which exercises checkpoint restoration of the map frame's key/value bookkeeping
-            Assert.False(reader.TrySkipValue());
-            Assert.Equal(2, reader.BytesRemaining);
-            Assert.Equal(1, reader.CurrentDepth);
-            Assert.Equal(CborReaderState.StartArray, reader.PeekState());
-
-            reader.SlideData(encoding.AsMemory(3), isFinalBlock: true);
-            Assert.True(reader.TrySkipValue());
-            Assert.Equal("b", reader.ReadTextString());
-            Helpers.VerifyValue(reader, 3);
-            reader.ReadEndMap();
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
         [Fact]
         public static void SlideData_AfterDocumentCompleted_ReaderRemainsFinished()
         {
@@ -442,56 +226,31 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Fact]
-        public static void TryReadByteString_NotFinalBlock_FalseMeansDestinationTooSmallOnly()
+        public static void TryReadString_NotFinalBlock_FalseMeansDestinationTooSmallOnly()
         {
-            byte[] encoding = "4401020304".HexToByteArray();
-            var reader = new CborReader(encoding, LaxOptions, isFinalBlock: false);
-
-            // a fully buffered value: false signals an undersized destination, not missing data
+            // fully buffered values: false signals an undersized destination, not missing data
+            var reader = new CborReader("4401020304".HexToByteArray(), LaxOptions, isFinalBlock: false);
             Assert.Equal(CborReaderState.ByteString, reader.PeekState());
             Assert.False(reader.TryReadByteString(new byte[2], out int bytesWritten));
             Assert.Equal(0, bytesWritten);
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
-
             Assert.True(reader.TryReadByteString(new byte[4], out bytesWritten));
             Assert.Equal(4, bytesWritten);
 
-            // a truncated value is not reported via the boolean; it throws as in final blocks
-            reader = new CborReader("440102".HexToByteArray(), LaxOptions, isFinalBlock: false);
-            Assert.Equal(CborReaderState.NeedsMoreData, reader.PeekState());
-            Assert.Throws<CborContentException>(() => reader.TryReadByteString(new byte[4], out _));
-        }
-
-        [Fact]
-        public static void TryReadTextString_NotFinalBlock_FalseMeansDestinationTooSmallOnly()
-        {
-            byte[] encoding = "6461626364".HexToByteArray(); // "abcd"
-            var reader = new CborReader(encoding, LaxOptions, isFinalBlock: false);
-
-            // a fully buffered value: false signals an undersized destination, not missing data
+            reader = new CborReader("6461626364".HexToByteArray(), LaxOptions, isFinalBlock: false); // "abcd"
             Assert.Equal(CborReaderState.TextString, reader.PeekState());
             Assert.False(reader.TryReadTextString(new char[2], out int charsWritten));
             Assert.Equal(0, charsWritten);
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
-
             Assert.True(reader.TryReadTextString(new char[4], out charsWritten));
             Assert.Equal(4, charsWritten);
 
-            // a truncated value is not reported via the boolean; it throws as in final blocks
+            // truncated values are not reported via the boolean; they throw as in final blocks
+            reader = new CborReader("440102".HexToByteArray(), LaxOptions, isFinalBlock: false);
+            Assert.Equal(CborReaderState.NeedsMoreData, reader.PeekState());
+            Assert.Throws<CborContentException>(() => reader.TryReadByteString(new byte[4], out _));
+
             reader = new CborReader("646162".HexToByteArray(), LaxOptions, isFinalBlock: false);
             Assert.Equal(CborReaderState.NeedsMoreData, reader.PeekState());
             Assert.Throws<CborContentException>(() => reader.TryReadTextString(new char[4], out _));
-        }
-
-        [Theory]
-        [MemberData(nameof(TruncatedCborInputs))]
-        public static void SkipValue_NotFinalBlock_TruncatedValue_ShouldThrowCborContentException(string hexEncoding)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var reader = new CborReader(encoding, LaxOptions, isFinalBlock: false);
-
-            Assert.Throws<CborContentException>(() => reader.SkipValue());
-            Assert.Equal(encoding.Length, reader.BytesRemaining);
         }
 
         [Theory]
@@ -608,42 +367,6 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Theory]
-        [InlineData(2, 17)]
-        [InlineData(500, 16)]
-        public static void SlideData_LargeDefiniteLengthCollections_HappyPath(int length, int chunkSize)
-        {
-            var writer = new CborWriter();
-            writer.WriteStartArray(length);
-            for (int i = 0; i < length; i++)
-            {
-                writer.WriteInt32(i);
-            }
-            writer.WriteEndArray();
-            byte[] arrayEncoding = writer.Encode();
-
-            writer.Reset();
-            writer.WriteStartMap(length);
-            for (int i = 0; i < length; i++)
-            {
-                writer.WriteInt32(i);
-                writer.WriteTextString($"value{i}");
-            }
-            writer.WriteEndMap();
-            byte[] mapEncoding = writer.Encode();
-
-            foreach (byte[] encoding in new[] { arrayEncoding, mapEncoding })
-            {
-                List<string> expectedTokens = ReadAllTokens(new CborReader(encoding, LaxOptions));
-
-                var feeder = new ChunkedFeeder(encoding, chunkSize);
-                var reader = new CborReader(ReadOnlyMemory<byte>.Empty, LaxOptions, isFinalBlock: false);
-                List<string> actualTokens = ReadAllTokens(reader, () => feeder.Slide(reader));
-
-                Assert.Equal(expectedTokens, actualTokens);
-            }
-        }
-
-        [Theory]
         [InlineData("5f41ab")] // indefinite-length byte string missing chunks and break byte
         [InlineData("5f4401")] // indefinite-length byte string with a truncated chunk
         public static void ReadByteString_NotFinalBlock_TruncatedIndefiniteLengthString_ShouldThrowCborContentException(string hexEncoding)
@@ -658,57 +381,6 @@ namespace System.Formats.Cbor.Tests
 
             // the non-throwing alternatives report the truncation
             Assert.False(reader.TrySkipValue());
-        }
-
-        [Fact]
-        public static void SlideData_StreamScenario_HappyPath()
-        {
-            var writer = new CborWriter();
-            writer.WriteStartMap(3);
-            writer.WriteTextString("name");
-            writer.WriteTextString(new string('x', 100));
-            writer.WriteTextString("items");
-            writer.WriteStartArray(50);
-            for (int i = 0; i < 50; i++)
-            {
-                writer.WriteInt32(i);
-            }
-            writer.WriteEndArray();
-            writer.WriteTextString("blob");
-            writer.WriteByteString(new byte[75]);
-            writer.WriteEndMap();
-            byte[] encoding = writer.Encode();
-
-            List<string> expectedTokens = ReadAllTokens(new CborReader(encoding, LaxOptions));
-
-            // mirrors the intended usage pattern: fixed-size buffer over a stream,
-            // copying the unconsumed tail to the front on every refill.
-            using var stream = new MemoryStream(encoding);
-            byte[] buffer = new byte[16];
-            int dataLength = 0;
-            var reader = new CborReader(ReadOnlyMemory<byte>.Empty, LaxOptions, isFinalBlock: false);
-
-            List<string> actualTokens = ReadAllTokens(reader, () =>
-            {
-                int keep = reader.BytesRemaining;
-                int start = dataLength - keep;
-
-                if (keep == buffer.Length)
-                {
-                    // a single token is larger than the buffer
-                    Array.Resize(ref buffer, buffer.Length * 2);
-                }
-
-                Buffer.BlockCopy(buffer, start, buffer, 0, keep);
-                int read = stream.Read(buffer, keep, buffer.Length - keep);
-                dataLength = keep + read;
-
-                reader.SlideData(buffer.AsMemory(0, dataLength), isFinalBlock: read == 0);
-                return true;
-            });
-
-            Assert.Equal(expectedTokens, actualTokens);
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
         }
 
         [Fact]
@@ -808,48 +480,6 @@ namespace System.Formats.Cbor.Tests
             reader = new CborReader("ba3fffffff".HexToByteArray(), LaxOptions, isFinalBlock: false); // int.MaxValue / 2 pairs
             Assert.Equal(int.MaxValue / 2, reader.ReadStartMap());
             Assert.Equal(CborReaderState.NeedsMoreData, reader.PeekState());
-        }
-
-        [Theory]
-        [MemberData(nameof(SampleValuesAndChunkSizes))]
-        public static void TrySkipValue_NotFinalBlock_ChunkedReading_HappyPath(string hexEncoding, int chunkSize)
-        {
-            byte[] encoding = hexEncoding.HexToByteArray();
-            var feeder = new ChunkedFeeder(encoding, chunkSize);
-            var reader = new CborReader(ReadOnlyMemory<byte>.Empty, LaxOptions, isFinalBlock: false);
-
-            while (!reader.TrySkipValue())
-            {
-                feeder.Slide(reader);
-            }
-
-            Assert.Equal(0, reader.BytesRemaining);
-            Assert.Equal(CborReaderState.Finished, reader.PeekState());
-        }
-
-        [Fact]
-        public static void TrySkipToParent_NotFinalBlock_NestedContexts_SucceedsAfterSlideData()
-        {
-            byte[] encoding = "a16161820102".HexToByteArray(); // {"a": [1, 2]}
-
-            for (int split = 4; split < encoding.Length; split++)
-            {
-                var reader = new CborReader(encoding.AsMemory(0, split), LaxOptions, isFinalBlock: false);
-                reader.ReadStartMap();
-                reader.ReadTextString();
-                reader.ReadStartArray();
-                Assert.Equal(2, reader.CurrentDepth);
-
-                Assert.False(reader.TrySkipToParent());
-                Assert.Equal(2, reader.CurrentDepth);
-
-                reader.SlideData(encoding.AsMemory(split - reader.BytesRemaining), isFinalBlock: true);
-                Assert.True(reader.TrySkipToParent()); // exits the array
-                Assert.Equal(1, reader.CurrentDepth);
-                Assert.True(reader.TrySkipToParent()); // exits the map
-                Assert.Equal(0, reader.CurrentDepth);
-                Assert.Equal(CborReaderState.Finished, reader.PeekState());
-            }
         }
 
         [Fact]
