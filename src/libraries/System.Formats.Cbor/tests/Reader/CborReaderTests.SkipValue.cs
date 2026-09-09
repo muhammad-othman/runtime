@@ -517,27 +517,6 @@ namespace System.Formats.Cbor.Tests
 
         public static IEnumerable<object[]> SkipTestInputs => SampleCborValues.Select(x => new [] { x });
         public static IEnumerable<object[]> SkipTestInvalidCborInputs => InvalidCborValues.Select(x => new[] { x });
-
-        // All InvalidCborValues entries that are merely truncated, i.e. could be completed by further data.
-        // The excluded entries are structurally malformed regardless of any data that could follow;
-        // TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList guards this filter against
-        // changes to the shared list.
-        public static IEnumerable<object[]> TruncatedCborInputs =>
-            InvalidCborValues.Except(MalformedCborValues).Select(x => new object[] { x });
-
-        private static readonly string[] MalformedCborValues = new[] { "bf01ff", "daffffffffff" };
-
-        [Fact]
-        public static void TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList()
-        {
-            foreach (string malformed in MalformedCborValues)
-            {
-                Assert.Contains(malformed, InvalidCborValues);
-
-                // appending data cannot make these valid: they already fail with a full buffer
-                var reader = new CborReader(malformed.HexToByteArray(), LaxOptions, isFinalBlock: false);
-                Assert.Throws<CborContentException>(() => reader.SkipValue());
-            }
-        }
+        public static IEnumerable<object[]> TruncatedCborInputs => TruncatedCborValues.Select(x => new object[] { x });
     }
 }
