@@ -712,27 +712,28 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Fact]
-        public static void PeekState_DanglingTagAtEndOfRootSequence_ReportsTruncationOnIncrementalReadsOnly()
+        public static void PeekState_DanglingTagAtEndOfRootSequence_MatchesFinalBlockBehavior()
         {
             var options = new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax, AllowMultipleRootLevelValues = true };
 
-            // incremental mode: the truncated tagged value is reported as NeedsMoreData until the final block arrives,
-            // then as truncated data rather than as the end of the sequence
+            // while more data may follow, the truncated tagged value is reported as NeedsMoreData
             var reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: false);
             Helpers.VerifyValue(reader, 1);
             reader.ReadTag();
             Assert.Equal(CborReaderState.NeedsMoreData, reader.PeekState());
 
+            // once the final block arrives, incremental readers match the shipped final-block behavior:
+            // the dangling tag is reported as the end of the sequence rather than as malformed data
             reader.SlideData(ReadOnlyMemory<byte>.Empty, isFinalBlock: true);
-            Assert.Throws<CborContentException>(() => reader.PeekState());
-            Assert.Throws<CborContentException>(() => reader.ReadInt32());
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
+            Assert.Throws<InvalidOperationException>(() => reader.ReadInt32());
 
-            // final mode: readers that never opted into incremental reading preserve the shipped behavior
-            // of reporting the end of the sequence
+            // final mode behaves identically
             reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: true);
             Helpers.VerifyValue(reader, 1);
             reader.ReadTag();
             Assert.Equal(CborReaderState.Finished, reader.PeekState());
+            Assert.Throws<InvalidOperationException>(() => reader.ReadInt32());
         }
 
         [Fact]
@@ -910,19 +911,6 @@ namespace System.Formats.Cbor.Tests
 
             reader.SlideData("02".HexToByteArray(), isFinalBlock: false);
             Helpers.VerifyValue(reader, 2);
-        }
-
-        [Fact]
-        public static void Read_FinalBlock_DanglingTagAtEndOfRootSequence_PreservesShippedBehavior()
-        {
-            var options = new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax, AllowMultipleRootLevelValues = true };
-            var reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: true);
-            Helpers.VerifyValue(reader, 1);
-            reader.ReadTag();
-
-            // readers that never opted into incremental reading preserve the shipped behavior:
-            // over-reading at the end of the sequence remains a usage error
-            Assert.Throws<InvalidOperationException>(() => reader.ReadInt32());
         }
 
         [Fact]

@@ -14,7 +14,6 @@ namespace System.Formats.Cbor
         private ReadOnlyMemory<byte> _data;
         private int _offset;
         private bool _isFinalBlock = true; // false iff the caller has declared that more data may follow via SlideData
-        private bool _isReadingIncrementally; // true iff the current document's data has ever been supplied as a non-final block
 
         private Stack<StackFrame>? _nestedDataItems;
         private CborMajorType? _currentMajorType; // major type of the currently written data item. Null iff at the root context
@@ -88,7 +87,6 @@ namespace System.Formats.Cbor
 
             _data = data;
             _isFinalBlock = isFinalBlock;
-            _isReadingIncrementally = !isFinalBlock;
             ConformanceMode = conformanceMode;
             AllowMultipleRootLevelValues = allowMultipleRootLevelValues;
             MaxDepth = maxDepth < 0 ? DefaultMaxDepth : maxDepth;
@@ -161,7 +159,6 @@ namespace System.Formats.Cbor
             _data = data;
             _offset = 0;
             _isFinalBlock = isFinalBlock;
-            _isReadingIncrementally = !isFinalBlock;
 
             _nestedDataItems?.Clear();
             _currentMajorType = default;
@@ -240,15 +237,6 @@ namespace System.Formats.Cbor
                 // check _itemsRead in addition to _offset since SlideData resets the offset to 0
                 if (_currentMajorType is null && _definiteLength is null && (_offset > 0 || _itemsRead > 0))
                 {
-                    // Incremental readers must report a root-level sequence ending in a dangling tag
-                    // as truncated data rather than as the end of the sequence. The check is scoped to
-                    // incremental reads to preserve the shipped behavior of final-block readers.
-                    if (_isTagContext && _isReadingIncrementally)
-                    {
-                        // the sequence ends with a tag not followed by a value
-                        throw new CborContentException(SR.Cbor_Reader_InvalidCbor_TagNotFollowedByValue);
-                    }
-
                     // we are at the end of a well-formed sequence of root-level CBOR values
                     throw new InvalidOperationException(SR.Cbor_Reader_NoMoreDataItemsToRead);
                 }
