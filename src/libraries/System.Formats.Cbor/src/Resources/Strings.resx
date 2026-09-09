@@ -157,7 +157,7 @@
     <value>Reading CBOR data incrementally is only supported in the 'Lax' conformance mode.</value>
   </data>
   <data name="Cbor_Reader_CannotSlideDataOnFinalBlock" xml:space="preserve">
-    <value>The current CBOR data was supplied as the final block; more data cannot be slid in. Call Reset to read a new payload.</value>
+    <value>Cannot slide new data after the reader's data has been supplied as the final block. Call Reset to read a new payload.</value>
   </data>
   <data name="Cbor_Reader_SlideDataBufferTooSmall" xml:space="preserve">
     <value>The new buffer cannot be smaller than the unconsumed bytes of the current buffer.</value>

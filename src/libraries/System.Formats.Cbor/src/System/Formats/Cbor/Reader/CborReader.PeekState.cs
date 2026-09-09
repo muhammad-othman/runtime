@@ -61,7 +61,10 @@ namespace System.Formats.Cbor
 
                 if (_currentMajorType is null && _definiteLength is null)
                 {
-                    if (_isTagContext)
+                    // Incremental readers must report a root-level sequence ending in a dangling tag
+                    // as truncated data rather than as the end of the sequence. The check is scoped to
+                    // incremental reads to preserve the shipped behavior of final-block readers.
+                    if (_isTagContext && _isReadingIncrementally)
                     {
                         // the sequence ends with a tag not followed by a value
                         throw new CborContentException(SR.Cbor_Reader_InvalidCbor_TagNotFollowedByValue);

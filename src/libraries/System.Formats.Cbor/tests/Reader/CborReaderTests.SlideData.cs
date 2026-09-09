@@ -13,14 +13,44 @@ namespace System.Formats.Cbor.Tests
     {
         private static CborReaderOptions LaxOptions => new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax };
 
+        // Token classes underrepresented in SampleCborValues, exercising the availability gate
+        // for every argument width: half- and double-precision floats, two-byte simple values,
+        // and multi-byte UTF-8 text contents (definite-length and as an indefinite-length chunk).
+        private static readonly string[] AdditionalChunkedSampleValues = new[]
+        {
+            "f93c00", // 1.0 (half-precision)
+            "fb3ff199999999999a", // 1.1 (double-precision)
+            "f8ff", // simple(255)
+            "63e6b0b4", // "水"
+            "7f63e6b0b46161ff", // "水" + "a" (indefinite-length)
+        };
+
         public static IEnumerable<object[]> SampleValuesAndChunkSizes =>
-            from hexEncoding in SampleCborValues
+            from hexEncoding in SampleCborValues.Concat(AdditionalChunkedSampleValues)
             from chunkSize in new[] { 1, 2, 3, 10 }
             select new object[] { hexEncoding, chunkSize };
 
         // All InvalidCborValues entries that are merely truncated, i.e. could be completed by further data.
+        // The excluded entries are structurally malformed regardless of any data that could follow;
+        // TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList guards this filter against
+        // changes to the shared list.
         public static IEnumerable<object[]> TruncatedCborInputs =>
-            InvalidCborValues.Except(new[] { "bf01ff", "daffffffffff" }).Select(x => new object[] { x });
+            InvalidCborValues.Except(MalformedCborValues).Select(x => new object[] { x });
+
+        private static readonly string[] MalformedCborValues = new[] { "bf01ff", "daffffffffff" };
+
+        [Fact]
+        public static void TruncatedCborInputs_ExcludedValues_AreMalformedEntriesOfSharedList()
+        {
+            foreach (string malformed in MalformedCborValues)
+            {
+                Assert.Contains(malformed, InvalidCborValues);
+
+                // appending data cannot make these valid: they already fail with a full buffer
+                var reader = new CborReader(malformed.HexToByteArray(), LaxOptions, isFinalBlock: false);
+                Assert.Throws<CborContentException>(() => reader.SkipValue());
+            }
+        }
 
         [Theory]
         [MemberData(nameof(SampleValuesAndChunkSizes))]
@@ -361,6 +391,43 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Fact]
+        public static void TrySkipValue_NotFinalBlock_TruncatedMapValue_ReturnsFalseAndResumesAfterSlideData()
+        {
+            byte[] encoding = "a26161820102616203".HexToByteArray(); // {"a": [1, 2], "b": 3}
+            var reader = new CborReader(encoding.AsMemory(0, 5), LaxOptions, isFinalBlock: false);
+
+            reader.ReadStartMap();
+            Assert.Equal("a", reader.ReadTextString());
+
+            // the failed skip at a value position enters the truncated array before restoring,
+            // which exercises checkpoint restoration of the map frame's key/value bookkeeping
+            Assert.False(reader.TrySkipValue());
+            Assert.Equal(2, reader.BytesRemaining);
+            Assert.Equal(1, reader.CurrentDepth);
+            Assert.Equal(CborReaderState.StartArray, reader.PeekState());
+
+            reader.SlideData(encoding.AsMemory(3), isFinalBlock: true);
+            Assert.True(reader.TrySkipValue());
+            Assert.Equal("b", reader.ReadTextString());
+            Helpers.VerifyValue(reader, 3);
+            reader.ReadEndMap();
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
+        }
+
+        [Fact]
+        public static void SlideData_AfterDocumentCompleted_ReaderRemainsFinished()
+        {
+            var reader = new CborReader("01".HexToByteArray(), LaxOptions, isFinalBlock: false);
+            Helpers.VerifyValue(reader, 1);
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
+
+            // sliding in more data does not resume reading a completed single-root document
+            reader.SlideData("02".HexToByteArray(), isFinalBlock: false);
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
+            Assert.Throws<InvalidOperationException>(() => reader.ReadInt32());
+        }
+
+        [Fact]
         public static void ReadEncodedValue_NotFinalBlock_TruncatedValue_ShouldThrowCborContentException()
         {
             byte[] encoding = "820102".HexToByteArray(); // [1, 2]
@@ -645,11 +712,12 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Fact]
-        public static void PeekState_DanglingTagAtEndOfRootSequence_ShouldThrowCborContentException()
+        public static void PeekState_DanglingTagAtEndOfRootSequence_ReportsTruncationOnIncrementalReadsOnly()
         {
             var options = new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax, AllowMultipleRootLevelValues = true };
 
-            // non-final mode: the truncated tagged value is reported as NeedsMoreData until the final block arrives
+            // incremental mode: the truncated tagged value is reported as NeedsMoreData until the final block arrives,
+            // then as truncated data rather than as the end of the sequence
             var reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: false);
             Helpers.VerifyValue(reader, 1);
             reader.ReadTag();
@@ -657,12 +725,14 @@ namespace System.Formats.Cbor.Tests
 
             reader.SlideData(ReadOnlyMemory<byte>.Empty, isFinalBlock: true);
             Assert.Throws<CborContentException>(() => reader.PeekState());
+            Assert.Throws<CborContentException>(() => reader.ReadInt32());
 
-            // final mode: the dangling tag surfaces immediately instead of reporting Finished
+            // final mode: readers that never opted into incremental reading preserve the shipped behavior
+            // of reporting the end of the sequence
             reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: true);
             Helpers.VerifyValue(reader, 1);
             reader.ReadTag();
-            Assert.Throws<CborContentException>(() => reader.PeekState());
+            Assert.Equal(CborReaderState.Finished, reader.PeekState());
         }
 
         [Fact]
@@ -843,16 +913,16 @@ namespace System.Formats.Cbor.Tests
         }
 
         [Fact]
-        public static void Read_DanglingTagAtEndOfRootSequence_ShouldThrowCborContentException()
+        public static void Read_FinalBlock_DanglingTagAtEndOfRootSequence_PreservesShippedBehavior()
         {
             var options = new CborReaderOptions { ConformanceMode = CborConformanceMode.Lax, AllowMultipleRootLevelValues = true };
             var reader = new CborReader("01c1".HexToByteArray(), options, isFinalBlock: true);
             Helpers.VerifyValue(reader, 1);
             reader.ReadTag();
 
-            // direct reads report the dangling tag like PeekState does,
-            // rather than declaring a clean end of the sequence
-            Assert.Throws<CborContentException>(() => reader.ReadInt32());
+            // readers that never opted into incremental reading preserve the shipped behavior:
+            // over-reading at the end of the sequence remains a usage error
+            Assert.Throws<InvalidOperationException>(() => reader.ReadInt32());
         }
 
         [Fact]

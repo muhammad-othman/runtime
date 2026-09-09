@@ -14,6 +14,7 @@ namespace System.Formats.Cbor
         private ReadOnlyMemory<byte> _data;
         private int _offset;
         private bool _isFinalBlock = true; // false iff the caller has declared that more data may follow via SlideData
+        private bool _isReadingIncrementally; // true iff the current document's data has ever been supplied as a non-final block
 
         private Stack<StackFrame>? _nestedDataItems;
         private CborMajorType? _currentMajorType; // major type of the currently written data item. Null iff at the root context
@@ -87,6 +88,7 @@ namespace System.Formats.Cbor
 
             _data = data;
             _isFinalBlock = isFinalBlock;
+            _isReadingIncrementally = !isFinalBlock;
             ConformanceMode = conformanceMode;
             AllowMultipleRootLevelValues = allowMultipleRootLevelValues;
             MaxDepth = maxDepth < 0 ? DefaultMaxDepth : maxDepth;
@@ -116,9 +118,8 @@ namespace System.Formats.Cbor
         /// <exception cref="CborContentException"><para>The data item is not a valid CBOR data item encoding.</para>
         /// <para>-or-</para>
         /// <para>The CBOR encoding is not valid under the current conformance mode.</para></exception>
-        /// <remarks>The returned memory is a view over the reader's current data buffer. It is only valid until the buffer is
-        /// replaced with <see cref="Reset(ReadOnlyMemory{byte})" />, <see cref="Reset(ReadOnlyMemory{byte}, bool)" />, or
-        /// <see cref="SlideData" />; if the caller reuses the underlying buffer, its contents are overwritten.</remarks>
+        /// <remarks>The returned memory is a view over the buffer supplied to the reader. If the caller reuses that buffer,
+        /// for example when supplying new data with <see cref="SlideData" />, the contents of the returned memory may be overwritten.</remarks>
         public ReadOnlyMemory<byte> ReadEncodedValue(bool disableConformanceModeChecks = false)
         {
             // keep a snapshot of the current offset
@@ -160,6 +161,7 @@ namespace System.Formats.Cbor
             _data = data;
             _offset = 0;
             _isFinalBlock = isFinalBlock;
+            _isReadingIncrementally = !isFinalBlock;
 
             _nestedDataItems?.Clear();
             _currentMajorType = default;
@@ -190,9 +192,9 @@ namespace System.Formats.Cbor
         /// <para>The caller is responsible for preserving all unread bytes, in order, at the beginning of <paramref name="data" />.
         /// Only the length of the new buffer is validated, not its contents.</para>
         /// <para><see cref="ReadOnlyMemory{T}" /> values previously returned by methods such as <see cref="ReadEncodedValue" /> are views
-        /// over the reader's previous buffer; if the caller reuses that buffer, their contents are overwritten.</para>
-        /// <para>Calling this method on a reader that has already read a complete document has no effect beyond replacing the buffer;
-        /// use <see cref="Reset(ReadOnlyMemory{byte}, bool)" /> to begin reading a new document.</para>
+        /// over the reader's previous buffer; if the caller reuses that buffer, their contents may be overwritten.</para>
+        /// <para>Calling this method after a complete document has been read does not resume reading; the reader continues to report
+        /// <see cref="CborReaderState.Finished" />. Use <see cref="Reset(ReadOnlyMemory{byte}, bool)" /> to begin reading a new document.</para>
         /// </remarks>
         public void SlideData(ReadOnlyMemory<byte> data, bool isFinalBlock)
         {
@@ -238,7 +240,10 @@ namespace System.Formats.Cbor
                 // check _itemsRead in addition to _offset since SlideData resets the offset to 0
                 if (_currentMajorType is null && _definiteLength is null && (_offset > 0 || _itemsRead > 0))
                 {
-                    if (_isTagContext)
+                    // Incremental readers must report a root-level sequence ending in a dangling tag
+                    // as truncated data rather than as the end of the sequence. The check is scoped to
+                    // incremental reads to preserve the shipped behavior of final-block readers.
+                    if (_isTagContext && _isReadingIncrementally)
                     {
                         // the sequence ends with a tag not followed by a value
                         throw new CborContentException(SR.Cbor_Reader_InvalidCbor_TagNotFollowedByValue);
